@@ -4,87 +4,22 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Unsupervised anomaly detection on simulated corporate time series, using an
-LSTM encoder-decoder trained only on normal behaviour.
+Find unusual months in time-series data — a turnover that suddenly triples or
+collapses, a figure that breaks a company's own pattern.
 
-The model learns to predict the next month of a company's financials. Trained
-exclusively on normal sequences, it predicts ordinary continuations well and
-anomalous ones badly — so prediction error becomes the anomaly score.
+You give it a table of monthly numbers per entity. It learns what each entity's
+normal looks like, then hands you a ranked list of the months that don't fit.
+**No labelled examples of "bad" needed** — it learns from normal behaviour
+alone.
 
-## How it works
+## What you do with it
 
-```
-simulate  →  window  →  split by company  →  train on normal  →  score  →  threshold
-20k series   6-month     55/15/30              LSTM enc-dec      per-seq   p99 of
-× 36 months  windows     train/val/test        (normal only)     MSE       held-out
-```
+1. **Train** a detector on your history (or on built-in demo data).
+2. **Score** new data — get a ranked list of the most unusual entities.
+3. Investigate the top of the list. Set how many alerts you want and it hands
+   you exactly that many.
 
-1. **Simulate.** 20,000 companies × 36 months of turnover and assets, with
-   sharp spikes or collapses injected into a small number of them.
-2. **Window.** Sliding 6-month windows. Each window's target is itself shifted
-   forward one month, making this next-step prediction rather than
-   reconstruction.
-3. **Split by company.** Whole companies go to train, validation, or test —
-   never split individual windows (see [Methodology](#methodology)).
-4. **Train on normal only.** Anomalies are withheld so they stay surprising.
-5. **Score and threshold.** Per-sequence MSE is the anomaly score. The cutoff
-   is a high percentile of error on *held-out normal* data.
-
-## Results
-
-A run at 3,000 companies for 3 epochs (`seed=42`), giving 27,000 test windows
-containing 12 anomalies — a base rate of 1 in 2,250:
-
-| Threshold | Precision | Recall | F1 | False positives |
-| --- | --- | --- | --- | --- |
-| p99 | 0.038 | 1.000 | 0.073 | 307 |
-| p99.9 (default) | 0.121 | 1.000 | 0.216 | 87 |
-| **`--alert-budget 20`** | **0.600** | **1.000** | **0.750** | **8** |
-
-Every row scores **PR-AUC 0.641** and **ROC AUC 0.9998**. Same model, same
-scores, same ranking — only the cutoff moved, and precision moved 5×.
-
-Two things follow.
-
-**ROC AUC is not informative here.** 0.9998 suggests a near-perfect detector
-while precision says 88% of its flags are wrong. Average precision is not
-fooled, which is why it leads the summary.
-
-**Precision was never limited by the model.** The scores support precision
-0.667 at full recall (best F1 0.800). A percentile flags a fixed *fraction* of
-normal data — at p99.9 that is ~27 false positives per 27,000 windows against
-12 real anomalies, capping precision at 0.308 before the model does anything.
-An alert budget fixes the *count* instead, which is what actually bounds false
-positives at a low base rate.
-
-The run tells you when this is happening rather than making you work it out:
-
-```
-WARNING  p99.9 flags ~27 of 26,988 normal items but only 12 anomalies exist,
-         so precision cannot exceed 0.308 however well the model ranks.
-         Raise the percentile (~p99.956 balances them) or set an alert budget.
-```
-
-### Choosing a threshold
-
-| Use | When |
-| --- | --- |
-| `--alert-budget N` | You have a fixed investigation capacity. Bounds false positives directly and is insensitive to how much normal data is scored. |
-| `--threshold-percentile P` | You want a fixed decision rule that transfers to new data unchanged. Pick `P` against the base rate, not out of habit. |
-
-The budget reads the scores it thresholds, so it uses **no labels** and leaks
-no ground truth — but the cutoff depends on the batch, so it is not a portable
-decision rule. The percentile is portable but must be matched to the base
-rate.
-
-A caveat on very high percentiles: the estimate comes from held-out normal
-error, and at p99.9 only ~14 of 13,525 validation windows sit above the
-cutoff. Tail quantiles from that few points are noisy — the measured
-false-positive rate came out at 0.32% against a nominal 0.1%. Past roughly
-p99.9 you need a much larger validation split for the number to mean anything,
-which is a further argument for the budget.
-
-## Install
+## Quickstart
 
 ```bash
 git clone https://github.com/MAY2704/anomaly_detection.git
@@ -92,46 +27,19 @@ cd anomaly_detection
 
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-
 pip install -e .
 ```
 
-For development tooling, `pip install -e ".[dev]"`.
-
-## Usage
-
-Two verbs: `train` fits a detector and saves a reusable bundle, `score` applies
-that bundle to new data.
+Try it on the built-in demo data:
 
 ```bash
-# train on simulated data
 anomaly-detection train --n-companies 500 --epochs 2
-
-# train on your own data (no labels required)
-anomaly-detection train --input-csv data.csv --output-dir bundle/
-
-# score new data with the saved bundle
-anomaly-detection score --model-dir bundle/ --input-csv new.csv \
-    --alerts-path alerts.csv --alert-budget 50
 ```
 
-`train --output-dir` receives a self-contained bundle:
+## Use your own data
 
-| File | Contents |
-| --- | --- |
-| `model.keras` | Trained model |
-| `scaler.joblib` | Fitted feature scaler |
-| `metadata.json` | Threshold, feature order, window length |
-| `metrics.json` | Config and metrics (metrics are `null` when unlabelled) |
-
-The feature order lives in the bundle, so scoring cannot silently mismatch the
-column order of an input file.
-
-## Using your own data
-
-Your file needs an id column, a period column, and your feature columns. **A
-label column is optional** — without one the run goes unsupervised: it trains
-on everything, skips metrics, and emits ranked alerts.
+Your file (CSV or Parquet) needs an **id** column, a **month** column, and one
+or more **numeric** columns to watch. That's it — no labels required.
 
 ```csv
 CP_ID,MONTH,TURNOVER,ASSETS
@@ -139,11 +47,18 @@ ACME_0001,2023-01-31,1043204.7,5007382.1
 ACME_0001,2023-02-28,1071553.2,5142201.9
 ```
 
+Train a detector, then score new data with it:
+
 ```bash
-anomaly-detection train --input-csv data.csv --output-dir bundle/
+# 1. learn what normal looks like, save the detector to bundle/
+anomaly-detection train --input-csv history.csv --output-dir bundle/
+
+# 2. point it at new data and ask for the 20 most unusual entities
 anomaly-detection score --model-dir bundle/ --input-csv new.csv \
     --alerts-path alerts.csv --alert-budget 20
 ```
+
+You get a ranked table — highest score is most unusual:
 
 ```
 3 of 5 alerts above threshold
@@ -155,22 +70,48 @@ anomaly-detection score --model-dir bundle/ --input-csv new.csv \
     5 NEW_0004  0.031617    False
 ```
 
-Column names are configurable with `--id-column`, `--month-column`, and
-`--label-column`. Any `*_ROC` feature absent from the file is derived
-automatically.
+Different column names? Use `--id-column`, `--month-column`. Training separately
+from scoring means you train once and reuse the saved `bundle/` on new data as
+often as you like.
 
-### Input is validated, loudly
+## How many alerts do you want?
 
-Real tables break the pipeline's assumptions in ways that are *silent* rather
-than loud — the results still look plausible. Loading refuses instead:
+The single most useful knob. Two ways to decide what gets flagged:
 
-| Problem | Why it matters | Behaviour |
-| --- | --- | --- |
-| Missing or non-numeric column | — | Error naming the column |
-| Unparseable dates | Become `NaT` and drop rows much later | Error quoting the bad values |
-| Entity with ≤ `time_steps` periods | Contributes zero windows | Dropped, with a warning |
-| Gap in the monthly history | A window spans it, presenting non-adjacent months as adjacent | Error; `--allow-gaps` to override |
-| Duplicate (id, period) rows | — | Error |
+| Option | Use when |
+| --- | --- |
+| `--alert-budget 20` | You can investigate ~20 cases. Flags the 20 most unusual, full stop. **Start here.** |
+| `--threshold-percentile 99.9` | You want a fixed rule that behaves the same on every future batch. |
+
+Why a budget is usually the right choice: real anomalies are rare, often fewer
+than 1 in 1,000. A percentile flags a fixed *fraction* of everything, so on a
+big dataset it drowns a handful of real problems in hundreds of false alarms. A
+budget flags a fixed *count*, so your alert list stays the size you can
+actually work through. On the demo data, switching from a percentile to a
+budget of 20 took precision from 0.12 to 0.60 — same model, five times fewer
+false alarms.
+
+You don't have to work this out yourself — the run warns you when a percentile
+would flood you:
+
+```
+WARNING  p99.9 flags ~27 of 26,988 normal items but only 12 anomalies exist,
+         so precision cannot exceed 0.308 however well the model ranks.
+         Raise the percentile (~p99.956 balances them) or set an alert budget.
+```
+
+## Bad data is caught before it wastes your time
+
+Messy input usually fails *silently* — the run finishes and the numbers look
+fine but aren't. This refuses instead, and tells you what to fix:
+
+| Problem | What happens |
+| --- | --- |
+| Missing or non-numeric column | Error naming the column |
+| Dates it can't read | Error quoting the bad values |
+| Entity with too little history | Dropped, with a warning |
+| A gap in the monthly history | Error (use `--allow-gaps` to accept it) |
+| Duplicate (id, month) rows | Error |
 
 ```
 error: 1 entity has gaps in their monthly history (e.g. NEW_0000). A window
@@ -178,19 +119,24 @@ spanning a gap treats non-consecutive months as adjacent. Reindex to a
 complete monthly grid, or pass allow_gaps to accept this.
 ```
 
-Exit codes: `0` success, `2` bad input or configuration, `1` unexpected failure.
+Exit codes for scripting: `0` success, `2` bad input or settings, `1`
+unexpected failure.
 
-### As a library
+## What a training run saves
 
-```python
-from anomaly_detection import Config
-from anomaly_detection.process.train import run
+`train --output-dir bundle/` writes a self-contained detector you can reuse:
 
-artifacts = run(Config(n_companies=1_000, epochs=3), save=False)
-print(artifacts.result.summary())
-```
+| File | What it is |
+| --- | --- |
+| `model.keras` | The trained model |
+| `scaler.joblib` | How features were scaled |
+| `metadata.json` | Threshold, feature order, window length |
+| `metrics.json` | Settings and (if labelled) how well it scored |
 
-Scoring with a saved bundle:
+The feature order travels with the bundle, so scoring can't silently go wrong
+if your new file has columns in a different order.
+
+## From Python
 
 ```python
 from anomaly_detection.input import load_and_prepare
@@ -204,124 +150,86 @@ groups, scores, _ = score_frame(bundle, df)
 alerts = build_alerts(groups, scores, threshold=bundle.threshold, budget=20)
 ```
 
-## Configuration
+## Common settings
 
-Every setting lives in [`Config`](src/anomaly_detection/config.py), is
-validated on construction, and is exposed as a CLI flag. The ones that matter
-most:
+Everything is a CLI flag and lives in [`Config`](src/anomaly_detection/config.py).
+The ones you'll actually touch:
 
-| Setting | Default | Notes |
+| Setting | Default | What it does |
 | --- | --- | --- |
-| `n_companies` | `20000` | Lower it for fast iteration |
-| `time_steps` | `6` | Window length in months |
-| `test_size` / `val_size` | `0.3` / `0.15` | Fractions of *companies*, not windows |
-| `threshold_percentile` | `99.9` | Expected false-positive rate; higher → fewer false positives |
-| `alert_budget` | `None` | Flag a fixed *count* instead. Overrides the percentile |
-| `n_anomalous_companies` | `40` | An absolute count, **not** a proportion of `n_companies` |
-| `dense_units` | `8` | Bottleneck width; narrower sharpens separation |
-| `epochs` | `5` | |
+| `--alert-budget` | off | Flag a fixed number of entities. The knob to reach for first |
+| `--time-steps` | `6` | How many months of context the model looks at |
+| `--epochs` | `5` | Longer training; raise if scores look noisy |
+| `--input-csv` | — | Your data file; omit to use demo data |
+| `--allow-gaps` | off | Accept months that aren't consecutive |
 
-## Methodology
+---
 
-Four properties of this pipeline are load-bearing. Each addresses a mistake
-that produces good-looking but meaningless numbers.
+## How it works
 
-**Splits partition companies, not windows.** Sliding windows overlap by
-`time_steps - 1` months. Splitting windows at random puts near-duplicates on
-both sides of the boundary, and the test set effectively grades the model on
-data it has already seen. Splits are also stratified on whether a company
-contains any anomaly, so rare positives reach all three sets.
+The model is trained to predict each entity's next month from the previous few.
+Trained only on ordinary history, it predicts normal continuations well and
+unusual ones badly — so **how wrong the prediction is** becomes the anomaly
+score.
 
-**The threshold comes from held-out data.** Error measured on data the model
-trained on is in-sample and understates normal error, dragging the cutoff down
-and flooding the results with false positives. Validation is a separate
-company split.
-
-**A percentile, not a normalised midpoint.** Min-max normalising test error
-against validation error and cutting at the midpoint lets a single extreme
-validation sample define the decision boundary. A percentile is stable, and it
-has a direct interpretation: p99 means roughly 1% of normal windows are
-expected to be flagged.
-
-**The threshold is chosen against the base rate, not by convention.** A
-percentile that ignores how rare anomalies are caps precision by arithmetic
-before the model contributes anything; see [Results](#results). The run warns
-when the configured percentile is incompatible with the anomalies present, and
-`--alert-budget` bounds the false-positive count directly.
-
-**PR-AUC is the headline metric.** With a handful of anomalies among hundreds
-of thousands of windows, a model that flags nothing scores over 99.9%
-accuracy, and as the [results](#results) show, ROC AUC reads 0.9998 where
-precision is 0.12. Average precision is not fooled, so it is what the summary
-leads with and what pull requests should compare.
-
-The run also warns when an evaluation is degenerate: no anomalies present in
-the test split, or too few for metrics to be stable across seeds.
-
-## Development
-
-```bash
-pip install -e ".[dev]"
-pre-commit install
-
-pytest -m "not slow"    # fast suite, no TensorFlow required
-pytest                  # everything
-ruff check . && mypy    # lint and type check
+```
+your data  →  6-month windows  →  train on normal  →  score each window  →  rank
 ```
 
-The data, windowing, splitting, and metrics modules import no TensorFlow, so
-the fast suite runs in seconds and CI can test them across three operating
-systems without a 600 MB install. Please keep it that way.
+An entity whose recent months are hard to predict rises to the top of the list.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
+## Why it's built the way it is
+
+A rare-event detector is easy to get subtly wrong in ways that still produce
+good-looking numbers. A few choices here exist specifically to avoid that, and
+are worth knowing before you change them:
+
+- **It judges entities it has never seen.** Train, validation, and test split by
+  *entity*, not by row, so the reported quality reflects new entities rather
+  than ones it already memorised.
+- **The alert threshold comes from held-out data**, never from the data the
+  model trained on — otherwise it looks more confident than it is.
+- **It leads with the right score.** At this rarity, "accuracy" and ROC AUC both
+  look near-perfect while the alert list is mostly wrong. The summary leads with
+  average precision (PR-AUC), which isn't fooled, and warns when too few
+  anomalies are present for any number to be stable.
+
+If you're extending the code, [CONTRIBUTING.md](CONTRIBUTING.md) has the full
+reasoning and the rules that keep these properties intact.
+
+## Good to know
+
+- The built-in dataset is **simulated**, so its headline numbers describe a toy
+  problem, not yours. Judge real performance on your own data.
+- Splits are by entity ("does this generalise to new entities?"). For a
+  strictly "will this catch next month's problem?" question, split your data by
+  time instead — train on the past, score the future.
+- Very different entity sizes can wash out the small ones, because scaling is
+  global. Large real datasets may want per-entity scaling.
+- On Windows, training runs on CPU (TensorFlow dropped native Windows GPU
+  support after 2.10); use WSL2 for GPU.
 
 ## Project layout
 
-Three layers, matching the three stages of a run:
+Three stages, three folders:
 
 ```
 src/anomaly_detection/
-├── config.py          # validated settings
-├── cli.py             # train / score subcommands
-├── input/             # getting data in, and proving it is usable
-│   ├── io.py          #   load CSV/Parquet, validate, derive features
-│   └── simulate.py    #   synthetic data with injected anomalies
-├── process/           # turning data into a trained model
-│   ├── preprocess.py  #   windowing, entity-wise splitting, scaling
-│   ├── model.py       #   LSTM encoder-decoder
-│   └── train.py       #   end-to-end pipeline
-└── output/            # turning scores into decisions
-    ├── evaluate.py    #   thresholds, metrics, feasibility checks
-    ├── inference.py   #   save/load a bundle, score new data
-    └── alerts.py      #   ranked alerts with per-entity dedupe
+├── input/     # load and validate data (real files or simulated)
+├── process/   # window, split, and train the model
+└── output/    # score, rank alerts, save/load a detector
 ```
 
-Both input sources produce the same frame contract, so the simulator and a
-real file are interchangeable downstream.
+## For contributors
 
-## Limitations
+```bash
+pip install -e ".[dev]"
+pytest -m "not slow"    # fast checks, no TensorFlow needed
+pytest                  # everything
+ruff check . && mypy    # lint and types
+```
 
-- The bundled dataset is **simulated**. Anomalies are injected with a known
-  generative process, which is considerably easier than the real thing; the
-  quoted metrics describe that simulation, not your data.
-- Splits partition *entities*, which answers "does this generalise to new
-  entities". For a production question — "will this work next month" — split
-  by time instead: train on the past, score the future.
-- The scaler is fitted globally, so an entity an order of magnitude smaller
-  than its peers is squeezed into a narrow sub-range. Real financials may need
-  per-entity normalisation or a `RobustScaler`.
-- Anomalies are only injected in the last three months of a series, so the
-  detector is never tested on anomalies early in a history.
-- `ASSETS` is generated before injection, so it does not reflect an anomalous
-  turnover reading. Only `TURNOVER` and its rate of change carry the signal.
-- `n_anomalous_companies` is an absolute count, so raising `n_companies` alone
-  makes anomalies **rarer**, not more plentiful. Scale both together, or the
-  problem quietly gets harder as you scale up.
-- With few positives, threshold-dependent metrics vary noticeably across
-  seeds. Compare PR-AUC, and average over seeds when it matters. The run warns
-  when the test split holds fewer than 30 anomalies.
-- TensorFlow dropped native Windows GPU support after 2.10, so Windows runs
-  are CPU-only. Use WSL2 for GPU.
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
