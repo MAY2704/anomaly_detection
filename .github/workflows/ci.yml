@@ -1,0 +1,175 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUNBUFFERED: "1"
+  # TensorFlow is chatty on import; keep CI logs readable.
+  TF_CPP_MIN_LOG_LEVEL: "3"
+
+jobs:
+  lint:
+    name: Lint and type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install tooling
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff mypy pandas-stubs
+
+      - name: Ruff (lint)
+        run: ruff check --output-format=github .
+
+      - name: Ruff (format)
+        run: ruff format --check .
+
+      - name: Mypy
+        run: mypy
+
+  test-fast:
+    name: Fast tests (no TensorFlow) - ${{ matrix.os }} / py${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # TensorFlow is a ~600 MB install. The data, windowing, splitting, and
+      # metrics logic has no TF dependency, so the broad matrix skips it and
+      # only the job below pays that cost.
+      - name: Install without TensorFlow
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy pandas scikit-learn joblib pyarrow pytest pytest-cov
+          pip install --no-deps -e .
+
+      - name: Run fast tests
+        run: pytest -m "not slow" --cov --cov-report=xml
+
+      - name: Upload coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.xml
+
+  test-full:
+    name: Full tests (with TensorFlow)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install with TensorFlow
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Run all tests
+        run: pytest
+
+      - name: Smoke test - train on simulated data
+        run: |
+          anomaly-detection train \
+            --n-companies 200 \
+            --n-months 12 \
+            --n-anomalous-companies 60 \
+            --time-steps 3 \
+            --epochs 1 \
+            --output-dir runs
+
+      - name: Check the bundle was written
+        run: |
+          test -f runs/model.keras
+          test -f runs/scaler.joblib
+          test -f runs/metadata.json
+          test -f runs/metrics.json
+          cat runs/metrics.json
+
+      # Exercises the path real users take: an unlabelled file in, a saved
+      # bundle out, then scoring fresh data with no retraining.
+      - name: Smoke test - round trip through a real file
+        run: |
+          python - <<'PY'
+          import numpy as np, pandas as pd
+          rng = np.random.default_rng(0)
+          def build(prefix, n):
+              rows = []
+              for i in range(n):
+                  t = np.linspace(1e6, 2e6, 24) * rng.normal(1, 0.05, 24)
+                  rows.append(pd.DataFrame({
+                      "CP_ID": f"{prefix}_{i:03d}",
+                      "MONTH": pd.date_range("2023-01-01", periods=24, freq="ME"),
+                      "TURNOVER": t, "ASSETS": t * 4.8}))
+              return pd.concat(rows)
+          build("TRAIN", 60).to_csv("train.csv", index=False)
+          build("SCORE", 20).to_csv("score.csv", index=False)
+          PY
+          anomaly-detection train --input-csv train.csv --time-steps 3 \
+            --epochs 1 --output-dir bundle
+          anomaly-detection score --model-dir bundle --input-csv score.csv \
+            --alerts-path alerts.csv --alert-budget 5
+          test -f alerts.csv
+          cat alerts.csv
+
+      - name: Bad input must fail loudly
+        run: |
+          python -c "
+          import pandas as pd
+          df = pd.read_csv('score.csv')
+          df.drop(df.index[5:8]).to_csv('gapped.csv', index=False)
+          "
+          if anomaly-detection score --model-dir bundle --input-csv gapped.csv; then
+            echo "expected a non-zero exit for gapped input" && exit 1
+          fi
+
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: Check metadata
+        run: twine check dist/*
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
