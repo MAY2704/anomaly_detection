@@ -29,7 +29,6 @@ from anomaly_detection.output.evaluate import (
     threshold_from_errors,
 )
 from anomaly_detection.output.inference import METRICS_FILENAME, save_artifacts
-from anomaly_detection.process.model import build_lstm_predictor
 from anomaly_detection.process.preprocess import prepare_sequences, split_and_scale
 
 if TYPE_CHECKING:
@@ -144,10 +143,16 @@ def run(config: Config = CFG, *, save: bool = True) -> TrainingArtifacts:
     Raises:
         ValueError: If the configuration yields an empty split.
     """
-    set_seeds(config.seed)
-
+    # Validate input before touching TensorFlow, so a bad path or a malformed
+    # file fails in milliseconds instead of after a multi-second import.
+    # Nothing here consumes global randomness: the simulator uses its own
+    # seeded generator and splits take an explicit random_state.
     df, report = load_input(config)
     logger.info("Input\n%s", report.summary())
+
+    from anomaly_detection.process.model import build_lstm_predictor
+
+    set_seeds(config.seed)
 
     sequences = prepare_sequences(
         df,
