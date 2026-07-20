@@ -4,6 +4,9 @@
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
+<img width="1367" height="596" alt="image" src="https://github.com/user-attachments/assets/f1ff061f-4bac-4bb4-b27c-fb70410adb21" />
+
+
 Find unusual months in time-series data — a turnover that suddenly triples or
 collapses, a figure that breaks a company's own pattern.
 
