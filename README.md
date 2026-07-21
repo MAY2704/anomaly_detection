@@ -180,21 +180,43 @@ your data  →  6-month windows  →  train on normal  →  score each window  �
 
 An entity whose recent months are hard to predict rises to the top of the list.
 
-## Why it's built the way it is
+## Methodology
 
-A rare-event detector is easy to get subtly wrong in ways that still produce
-good-looking numbers. A few choices here exist specifically to avoid that, and
-are worth knowing before you change them:
+Four properties of this pipeline are load-bearing. Each addresses a mistake
+that produces good-looking but meaningless numbers.
 
-- **It judges entities it has never seen.** Train, validation, and test split by
-  *entity*, not by row, so the reported quality reflects new entities rather
-  than ones it already memorised.
-- **The alert threshold comes from held-out data**, never from the data the
-  model trained on — otherwise it looks more confident than it is.
-- **It leads with the right score.** At this rarity, "accuracy" and ROC AUC both
-  look near-perfect while the alert list is mostly wrong. The summary leads with
-  average precision (PR-AUC), which isn't fooled, and warns when too few
-  anomalies are present for any number to be stable.
+**Splits partition companies, not windows.** Sliding windows overlap by
+`time_steps - 1` months. Splitting windows at random puts near-duplicates on
+both sides of the boundary, and the test set effectively grades the model on
+data it has already seen. Splits are also stratified on whether a company
+contains any anomaly, so rare positives reach all three sets.
+
+**The threshold comes from held-out data.** Error measured on data the model
+trained on is in-sample and understates normal error, dragging the cutoff down
+and flooding the results with false positives. Validation is a separate
+company split.
+
+**A percentile, not a normalised midpoint.** Min-max normalising test error
+against validation error and cutting at the midpoint lets a single extreme
+validation sample define the decision boundary. A percentile is stable, and it
+has a direct interpretation: p99 means roughly 1% of normal windows are
+expected to be flagged.
+
+**The threshold is chosen against the base rate, not by convention.** A
+percentile that ignores how rare anomalies are caps precision by arithmetic
+before the model contributes anything; see
+[How many alerts do you want?](#how-many-alerts-do-you-want). The run warns
+when the configured percentile is incompatible with the anomalies present, and
+`--alert-budget` bounds the false-positive count directly.
+
+**PR-AUC is the headline metric.** With a handful of anomalies among hundreds
+of thousands of windows, a model that flags nothing scores over 99.9%
+accuracy, and ROC AUC can read 0.9998 where precision is 0.12. Average
+precision is not fooled, so it is what the summary leads with and what pull
+requests should compare.
+
+The run also warns when an evaluation is degenerate: no anomalies present in
+the test split, or too few for metrics to be stable across seeds.
 
 If you're extending the code, [CONTRIBUTING.md](CONTRIBUTING.md) has the full
 reasoning and the rules that keep these properties intact.
