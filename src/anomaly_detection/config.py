@@ -74,6 +74,17 @@ class Config:
     anomaly_probability: float = 0.5
     """Chance an eligible slot actually receives an anomaly."""
 
+    anomaly_kind: str = "univariate"
+    """Which kind of anomaly the simulator injects.
+
+    - ``"univariate"``: a turnover spike or collapse — visible in one variable.
+    - ``"multivariate"``: a broken lead-lag relationship. Assets normally track
+      last month's turnover; the anomaly makes them move the wrong way while
+      every value stays within its own normal range, so the anomaly is
+      invisible in any single series and only shows up in how the variables
+      move together. Best paired with ``features=("TURNOVER", "ASSETS")``.
+    """
+
     features: tuple[str, ...] = ("TURNOVER", "ASSETS", "TURNOVER_ROC")
     """Feature columns fed to the model, in order."""
 
@@ -164,6 +175,12 @@ class Config:
 
         if not self.features:
             raise ValueError("features must not be empty")
+
+        if self.anomaly_kind not in ("univariate", "multivariate"):
+            raise ValueError(
+                "anomaly_kind must be 'univariate' or 'multivariate', got "
+                f"{self.anomaly_kind!r}"
+            )
 
         if not 0.0 < self.test_size < 1.0:
             raise ValueError(f"test_size must be in (0, 1), got {self.test_size}")

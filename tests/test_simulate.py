@@ -147,3 +147,85 @@ class TestValidation:
             generate_data(
                 10, 12, seed=0, n_anomalous_companies=2, anomaly_offsets=(offset,)
             )
+
+    def test_unknown_anomaly_kind_raises(self):
+        with pytest.raises(ValueError, match="anomaly_kind"):
+            generate_data(10, 12, seed=0, n_anomalous_companies=2, anomaly_kind="bogus")
+
+
+class TestMultivariateAnomaly:
+    """The multivariate mode injects a broken lead-lag between the features.
+
+    Its defining property is that the anomaly is invisible in any single
+    series and only shows up in how turnover and assets move together — the
+    reason a joint model is needed at all.
+    """
+
+    def _generate(self, **kwargs):
+        params = {
+            "n_companies": 200,
+            "n_months": 24,
+            "seed": 0,
+            "n_anomalous_companies": 60,
+            "anomaly_probability": 1.0,
+            "anomaly_offsets": (-1, -2),
+            "anomaly_kind": "multivariate",
+        }
+        params.update(kwargs)
+        return generate_data(**params)
+
+    def test_same_columns_as_univariate(self):
+        assert set(self._generate().columns) == EXPECTED_COLUMNS
+
+    def test_anomalies_are_injected(self):
+        assert self._generate()[LABEL_COLUMN].sum() > 0
+
+    def test_reproducible_for_a_seed(self):
+        assert self._generate(seed=7).equals(self._generate(seed=7))
+
+    def _within_series_z(self, df, column):
+        """|z| of each anomalous value against its own company's history."""
+        anomalies = df[df[LABEL_COLUMN] == 1]
+        stats = df.groupby(ID_COLUMN)[column].agg(["mean", "std"])
+
+        def z(row):
+            mean = stats.loc[row[ID_COLUMN], "mean"]
+            std = stats.loc[row[ID_COLUMN], "std"]
+            return abs(row[column] - mean) / std
+
+        return anomalies.apply(z, axis=1)
+
+    def test_anomalies_are_marginally_invisible(self):
+        """Each anomalous value is unremarkable within its own series.
+
+        This is the whole point: a per-series detector cannot see these. The
+        anomalous values sit within a few standard deviations of each
+        company's own history for both features — nowhere near the blatant
+        break a univariate spike would produce.
+        """
+        df = self._generate()
+        assert (df[LABEL_COLUMN] == 1).any()
+        for column in ("TURNOVER", "ASSETS"):
+            # A univariate spike lands well past 3 sigma; these stay modest.
+            assert self._within_series_z(df, column).median() < 3.0
+
+    def test_turnover_is_not_itself_spiked(self):
+        """Turnover stays i.i.d.-normal; the anomaly is in the relationship."""
+        assert self._within_series_z(self._generate(), "TURNOVER").max() < 4.0
+
+    def test_no_nulls(self):
+        assert not self._generate().isnull().to_numpy().any()
+
+
+class TestAnomalyKindsAreDistinct:
+    def test_kinds_produce_different_data(self):
+        shared = {"seed": 1, "n_anomalous_companies": 20}
+        uni = generate_data(50, 20, anomaly_kind="univariate", **shared)
+        multi = generate_data(50, 20, anomaly_kind="multivariate", **shared)
+        assert not uni["ASSETS"].equals(multi["ASSETS"])
+
+    def test_univariate_is_the_default(self):
+        shared = {"seed": 3, "n_anomalous_companies": 10}
+        explicit = generate_data(30, 15, anomaly_kind="univariate", **shared)
+        default = generate_data(30, 15, **shared)
+        assert default.equals(explicit)

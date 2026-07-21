@@ -111,6 +111,7 @@ def load_input(config: Config) -> tuple[pd.DataFrame, DataQualityReport]:
         n_anomalous_companies=config.n_anomalous_companies,
         anomaly_offsets=config.anomaly_offsets,
         anomaly_probability=config.anomaly_probability,
+        anomaly_kind=config.anomaly_kind,
     )
     return prepare_input(
         df,

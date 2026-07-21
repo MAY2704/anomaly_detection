@@ -197,6 +197,16 @@ are worth knowing before you change them:
 If you're extending the code, [CONTRIBUTING.md](CONTRIBUTING.md) has the full
 reasoning and the rules that keep these properties intact.
 
+## Is an LSTM worth it?
+
+Not always. We ran it head-to-head against classical methods (ARIMA, matrix
+profile) on two kinds of anomaly. On a single-variable spike, a training-free
+matrix profile nearly ties it. On an anomaly hidden in how variables move
+*together*, the LSTM is the only method that works and the baselines drop to
+near-random. The full write-up, numbers, and reproduction recipe are in
+[docs/baseline-comparison.md](docs/baseline-comparison.md). The simulator can
+generate both kinds via `--anomaly-kind {univariate,multivariate}`.
+
 ## Good to know
 
 - The built-in dataset is **simulated**, so its headline numbers describe a toy

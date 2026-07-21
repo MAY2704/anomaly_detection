@@ -91,6 +91,13 @@ def _add_train_parser(subparsers: argparse._SubParsersAction) -> None:
     sim.add_argument(
         "--n-anomalous-companies", type=int, default=CFG.n_anomalous_companies
     )
+    sim.add_argument(
+        "--anomaly-kind",
+        choices=("univariate", "multivariate"),
+        default=CFG.anomaly_kind,
+        help="univariate: a turnover spike; multivariate: a broken lead-lag "
+        "relationship, invisible in any single series",
+    )
 
     split = parser.add_argument_group("splitting")
     split.add_argument(

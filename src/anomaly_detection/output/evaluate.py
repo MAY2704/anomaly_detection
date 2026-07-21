@@ -106,7 +106,8 @@ def sequence_errors(targets: np.ndarray, predictions: np.ndarray) -> np.ndarray:
     if targets.ndim != 3:
         raise ValueError(f"expected 3-D arrays, got {targets.ndim}-D")
 
-    return np.mean((targets - predictions) ** 2, axis=(1, 2))
+    errors: np.ndarray = np.mean((targets - predictions) ** 2, axis=(1, 2))
+    return errors
 
 
 def threshold_from_errors(errors: np.ndarray, percentile: float = 99.0) -> float:

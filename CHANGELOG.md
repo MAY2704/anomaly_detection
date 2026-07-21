@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Multivariate anomaly mode** for the simulator
+  (`generate_data(..., anomaly_kind="multivariate")`,
+  `Config.anomaly_kind`, `anomaly-detection train --anomaly-kind ...`). It
+  breaks a lead-lag relationship between turnover and assets while keeping every
+  value within its own normal range, so the anomaly is invisible in any single
+  series and only detectable jointly. The default remains `"univariate"`, and
+  that path is byte-for-byte unchanged.
+- `docs/baseline-comparison.md` — a head-to-head of the LSTM against ARIMA and
+  matrix-profile baselines on both anomaly kinds, with methodology, numbers, and
+  a reproduction recipe. The baseline code and its heavy dependencies are
+  intentionally kept out of the repository; the document is the durable record.
+
 ## [0.2.0]
 
 Real input files, saved detectors, and a three-layer package structure.
