@@ -86,8 +86,7 @@ The single most useful knob. Two ways to decide what gets flagged:
 | `--alert-budget 20` | You can investigate ~20 cases. Flags the 20 most unusual, full stop. **Start here.** |
 | `--threshold-percentile 99.9` | You want a fixed rule that behaves the same on every future batch. |
 
-Why a budget is usually the right choice: real anomalies are rare, often fewer
-than 1 in 1,000. A percentile flags a fixed *fraction* of everything, so on a
+Why a budget is usually the right choice: real anomalies are rare, often only a handful in tens of thousands. A percentile flags a fixed *fraction* of everything, so on a
 big dataset it drowns a handful of real problems in hundreds of false alarms. A
 budget flags a fixed *count*, so your alert list stays the size you can
 actually work through. On the demo data, switching from a percentile to a
